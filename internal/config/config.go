@@ -57,7 +57,7 @@ func NewConfig() (*Config, error) {
 
 	cfg := &Config{}
 
-	err = json.Unmarshal(configText, &cfg)
+	err = json.Unmarshal(configText, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("некорректный формат файла:%s", err.Error())
 	}
