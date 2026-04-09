@@ -51,7 +51,7 @@ func NewContext() fx.Option {
 	return fx.Module("ctx",
 		fx.Provide(
 			func() (*ctx, context.Context) {
-				c, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+				c, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 				return &ctx{ctx: c, stop: stop}, c
 			},
 		),
