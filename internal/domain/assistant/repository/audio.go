@@ -122,6 +122,7 @@ func (r *Repository) SaveResult(ctx context.Context, id string, resultJson strin
 	if len(result.WordAlignments) > 0 {
 		valueParts := make([]string, 0, len(result.WordAlignments))
 		args := make([]any, 0, len(result.WordAlignments)*2)
+		argPos := 1
 
 		for _, wa := range result.WordAlignments {
 			word := strings.TrimSpace(wa.Word)
@@ -129,13 +130,13 @@ func (r *Repository) SaveResult(ctx context.Context, id string, resultJson strin
 				continue
 			}
 
-			valueParts = append(valueParts, "(?, ?)")
+			valueParts = append(valueParts, fmt.Sprintf("($%d, $%d)", argPos, argPos+1))
 			args = append(args, id, word)
+			argPos += 2
 		}
 
 		if len(valueParts) > 0 {
 			insertQuery := fmt.Sprintf(qInsertWord, strings.Join(valueParts, ","))
-			//insertQuery = tx.Rebind(insertQuery)
 
 			if _, err = tx.Exec(ctx, insertQuery, args...); err != nil {
 				return fmt.Errorf("insert word: %w", err)
