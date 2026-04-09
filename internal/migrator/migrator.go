@@ -5,6 +5,9 @@ import (
 	"assistant/internal/config"
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -18,10 +21,42 @@ type Migrator struct {
 	log *zap.Logger
 }
 
-// RunMigrations запускает миграции базы данных.
+func detectMigrationsDir() (string, error) {
+	if wd, err := os.Getwd(); err == nil {
+		p := filepath.Join(wd, "migrations")
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			return p, nil
+		}
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates := []string{
+			filepath.Join(exeDir, "migrations"),
+			filepath.Clean(filepath.Join(exeDir, "..", "migrations")),
+		}
+		for _, p := range candidates {
+			if st, err := os.Stat(p); err == nil && st.IsDir() {
+				return p, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("migrations directory not found (tried cwd and executable dir)")
+}
+
 func NewMigrator(cfg *config.Config, log *zap.Logger) (*Migrator, error) {
+	migrationsDir, err := detectMigrationsDir()
+	if err != nil {
+		log.Error("failed to detect migrations directory", zap.Error(err))
+		return nil, err
+	}
+
+	sourceURL := "file://" + migrationsDir
+	log.Info("migrator configured", zap.String("source", sourceURL))
+
 	m, err := migrate.New(
-		"file://migrations",
+		sourceURL,
 		cfg.DSN,
 	)
 	if err != nil {

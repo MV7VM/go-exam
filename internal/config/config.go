@@ -39,18 +39,15 @@ type Setting struct {
 
 func NewConfig() (*Config, error) {
 
-	var configPath string
+	// Поддерживаем и латинскую "-c", и кириллическую "-с" (частая опечатка на RU раскладке).
+	// Важно: обязательно парсим флаги, иначе значения никогда не установятся.
+	fileConfigFlagLatin := flag.String("c", "config.json", "Файл конфигурации")
+	fileConfigFlagCyrillic := flag.String("с", "", "Файл конфигурации (кириллическая 'с')")
+	flag.Parse()
 
-	fileConfigFlag := flag.String("с", "config.json", "Файл конфигурации")
-
-	flag.CommandLine.Visit(func(f *flag.Flag) {
-		if f.Name == "c" {
-			configPath = *fileConfigFlag
-		}
-	})
-
-	if configPath == "" {
-		configPath = "config.json"
+	configPath := *fileConfigFlagLatin
+	if *fileConfigFlagCyrillic != "" {
+		configPath = *fileConfigFlagCyrillic
 	}
 
 	configText, err := os.ReadFile(configPath)

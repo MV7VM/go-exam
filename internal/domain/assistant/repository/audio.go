@@ -11,39 +11,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrorNotContent = errors.New("data not found")
-
-var selectAudioByID string = `SELECT result_short, result_text, is_voice FROM recognition.users_audio WHERE user_id = $1 and id=$2`
-
-var selectAudioByWord string = `SELECT a.id, a.path FROM recognition.users_audio a inner join recognition.users_audio_worr w on w.id=a.id WHERE a.user_id = $1 and word=$2 `
-
-var insertAudio string = `INSERT INTO recognition.users_audio(id, user_id, path, is_voice) values($1,$2,$3,$4)`
-
-var updateStatusAudio string = `update recognition.users_audio 
-								set  file_id=$2,task_id=$3,status=$4,updated_at=NOW()
-								where id=$1`
-
-var updateShortTextAudio string = `update recognition.users_audio 
-								set  result_short=$2,updated_at=NOW()
-								where id=$1`
-
-var updateResult string = `update recognition.users_audio 
-								set  result=$2, result_text=$3, updated_at=NOW()
-								where id=$1`
-
-var insertWorr string = `
-				INSERT INTO recognition.users_audio_worr (id, word)
-				VALUES %s
-			`
+const qGetAudioByID = `SELECT result_short, result_text, is_voice FROM assistant.users_audio WHERE user_id = $1 and id=$2`
 
 func (r *Repository) GetAudioByID(ctx context.Context, userID int64, audioID string) (string, string, bool, error) {
 	var text, shortText string
 	var isVoice bool
 
-	err := r.db.QueryRow(ctx, selectAudioByID, userID, audioID).Scan(&shortText, &text, &isVoice)
+	err := r.db.QueryRow(ctx, qGetAudioByID, userID, audioID).Scan(&shortText, &text, &isVoice)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", "", false, ErrorNotContent
+			return "", "", false, errors.New("data not found")
 		}
 		return "", "", false, fmt.Errorf("ошибка получения текст аудио из БД: %w", err)
 	}
@@ -51,10 +28,12 @@ func (r *Repository) GetAudioByID(ctx context.Context, userID int64, audioID str
 	return shortText, text, isVoice, nil
 }
 
+const qGetAudioByWord = `SELECT a.id, a.path FROM assistant.users_audio a inner join assistant.users_audio_worr w on w.id=a.id WHERE a.user_id = $1 and word=$2 `
+
 func (r *Repository) GetAudioByWord(ctx context.Context, userID int64, word string) ([]*model.AudioShort, error) {
 	//var audioList []*model.AudioShort
 
-	rows, err := r.db.Query(ctx, selectAudioByWord, userID, word)
+	rows, err := r.db.Query(ctx, qGetAudioByWord, userID, word)
 	if err != nil {
 		return nil, fmt.Errorf("ошибка выполнения запроса: %w", err)
 	}
@@ -65,29 +44,15 @@ func (r *Repository) GetAudioByWord(ctx context.Context, userID int64, word stri
 		return nil, err
 	}
 
-	//for rows.Next() {
-	//	var audio model.AudioShort
-	//	err := rows.Scan(
-	//		&audio.ID,
-	//		&audio.Path,
-	//	)
-	//	if err != nil {
-	//		return nil, fmt.Errorf("ошибка сканирования строки: %w", err)
-	//	}
-	//	audioList = append(audioList, &audio)
-	//}
-	//
-	//if err = rows.Err(); err != nil {
-	//	return nil, fmt.Errorf("ошибка при чтении строк: %w", err)
-	//}
-
 	return audioList, nil
 }
+
+const qCreateAudio = `INSERT INTO assistant.users_audio(id, user_id, path, is_voice) values($1,$2,$3,$4)`
 
 func (r *Repository) CreateAudio(ctx context.Context, userID int64, file string, isVoice bool) (string, error) {
 	id := model.NewUUID()
 
-	_, err := r.db.Exec(ctx, insertAudio, id, userID, file, isVoice)
+	_, err := r.db.Exec(ctx, qCreateAudio, id, userID, file, isVoice)
 	if err != nil {
 		return "", fmt.Errorf("ошибка сохранения аудио: %w", err)
 	}
@@ -95,9 +60,13 @@ func (r *Repository) CreateAudio(ctx context.Context, userID int64, file string,
 	return id, nil
 }
 
+const qUpdateStatusTask = `update assistant.users_audio 
+								set  file_id=$2,task_id=$3,status=$4,updated_at=NOW()
+								where id=$1`
+
 func (r *Repository) UpdateStatusTask(ctx context.Context, id, taskID, fileID, status string) error {
 
-	_, err := r.db.Exec(ctx, updateStatusAudio, id, toNullString(fileID), toNullString(taskID), status)
+	_, err := r.db.Exec(ctx, qUpdateStatusTask, id, toNullString(fileID), toNullString(taskID), status)
 	if err != nil {
 		return fmt.Errorf("ошибка обновления статуса аудио: %w", err)
 	}
@@ -105,15 +74,29 @@ func (r *Repository) UpdateStatusTask(ctx context.Context, id, taskID, fileID, s
 	return nil
 }
 
+const qUpdateShortText = `update assistant.users_audio 
+								set  result_short=$2,updated_at=NOW()
+								where id=$1`
+
 func (r *Repository) UpdateShortText(ctx context.Context, id string, text string) error {
 
-	_, err := r.db.Exec(ctx, updateShortTextAudio, id, text)
+	_, err := r.db.Exec(ctx, qUpdateShortText, id, text)
 	if err != nil {
 		return fmt.Errorf("ошибка обновления краткой выжимки аудио: %w", err)
 	}
 
 	return nil
 }
+
+const (
+	qUpdateResult = `update assistant.users_audio 
+								set  result=$2, result_text=$3, updated_at=NOW()
+								where id=$1`
+	qInsertWord string = `
+				INSERT INTO assistant.users_audio_worr (id, word)
+				VALUES %s
+			`
+)
 
 func (r *Repository) SaveResult(ctx context.Context, id string, resultJson string, result *model.CombinedResult) error {
 	tx, err := r.db.Begin(ctx)
@@ -126,14 +109,14 @@ func (r *Repository) SaveResult(ctx context.Context, id string, resultJson strin
 		}
 	}()
 
-	res, err := tx.Exec(ctx, updateResult, id, resultJson, result.NormalizedText)
+	res, err := tx.Exec(ctx, qUpdateResult, id, resultJson, result.NormalizedText)
 	if err != nil {
 		return fmt.Errorf("обновление результата выполнено с ошибкой: %w", err)
 	}
 
 	rowsAffected := res.RowsAffected()
 	if rowsAffected == 0 {
-		return fmt.Errorf("row with id=%d not found", id)
+		return fmt.Errorf("row with id=%s not found", id)
 	}
 
 	if len(result.WordAlignments) > 0 {
@@ -151,11 +134,11 @@ func (r *Repository) SaveResult(ctx context.Context, id string, resultJson strin
 		}
 
 		if len(valueParts) > 0 {
-			insertQuery := fmt.Sprintf(insertWorr, strings.Join(valueParts, ","))
+			insertQuery := fmt.Sprintf(qInsertWord, strings.Join(valueParts, ","))
 			//insertQuery = tx.Rebind(insertQuery)
 
 			if _, err = tx.Exec(ctx, insertQuery, args...); err != nil {
-				return fmt.Errorf("insert worr: %w", err)
+				return fmt.Errorf("insert word: %w", err)
 			}
 		}
 	}
