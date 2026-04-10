@@ -1,0 +1,20 @@
+{
+  "telegramToken": "your_telegram_bot_token",
+  "workersCount": 5,
+  "optimalChanSize": 100,
+  "periodPolling": 30,
+  "salutSpeech": {
+    "token": "your_salut_speech_token",
+    "authHost": "https://auth.salut.speech.example.com",
+    "requestHost": "https://api.salut.speech.example.com"
+  },
+  "gigachat": {
+    "token": "your_gigachat_token",
+    "authHost": "https://auth.gigachat.example.com",
+    "requestHost": "https://api.gigachat.example.com"
+  },
+  "dsn": "user:password@tcp(localhost:3306)/dbname?charset=utf8mb4&parseTime=True&loc=Local",
+  "pollingBot": 30,
+  "contextTimeout": 60,
+  "dirLoadAudio": "/var/www/audio"
+}

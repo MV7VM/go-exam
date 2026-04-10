@@ -1,0 +1,214 @@
+package processor
+
+import (
+	"assistant/internal/config"
+	"assistant/internal/domain/assistant/gigachat"
+	"assistant/internal/domain/assistant/model"
+	"assistant/internal/domain/assistant/repository"
+	"assistant/internal/domain/assistant/salutspeech"
+	"context"
+	"errors"
+	"fmt"
+	"sync"
+	"time"
+
+	"go.uber.org/zap"
+	tele "gopkg.in/telebot.v3"
+)
+
+type Job struct {
+	Text     string
+	UserID   int64
+	Username string
+	ChatID   int64
+
+	IdAudio  string
+	KeyWord  string
+	Handler  string
+	FilePath string
+	MIME     string
+	FileName string
+}
+
+type ProcessorBot struct {
+	ctx context.Context
+
+	lgr     *zap.Logger
+	jobs    chan Job
+	workers int
+
+	bot *tele.Bot
+
+	salutSpeech *salutspeech.Client
+	gigachat    *gigachat.GigaChatClient
+
+	repo *repository.Repository
+
+	userHistory map[int64][]*model.Message
+	mx          sync.RWMutex
+}
+
+func NewProcessorBot(ctx context.Context, logger *zap.Logger, cfgGlobal *config.Config, ss *salutspeech.Client, gg *gigachat.GigaChatClient, repo *repository.Repository) (*ProcessorBot, error) {
+
+	if logger == nil {
+		return nil, fmt.Errorf("не указан logger")
+	}
+	if cfgGlobal.TelegramToken == "" {
+		return nil, fmt.Errorf("не указан tokenBot")
+	}
+	if ss == nil {
+		return nil, fmt.Errorf("не указан salutSpeechСlient")
+	}
+	if gg == nil {
+		return nil, fmt.Errorf("не указан gigachatСlient")
+	}
+	if repo == nil {
+		return nil, fmt.Errorf("не указан repository")
+	}
+
+	cfg, err := NewProcessorBotConfig(
+		WithCountWorkers(cfgGlobal.CountWorkers),
+		WithPollingPeriodBot(cfgGlobal.PollingBot),
+		WithSizeChannel(cfgGlobal.SizeChannel),
+		WithUploadDir(cfgGlobal.DirectoryLoadAudio),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	pr := &ProcessorBot{
+		ctx:         ctx,
+		lgr:         logger,
+		jobs:        make(chan Job, cfg.SizeChannel),
+		workers:     cfg.CountWorkers,
+		salutSpeech: ss,
+		gigachat:    gg,
+		repo:        repo,
+		userHistory: make(map[int64][]*model.Message),
+	}
+
+	bot, err := pr.newTeleBot(cfgGlobal.TelegramToken, cfg.PollingPeriodBot)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка создания подключения к telegram bot: %w", err)
+	}
+
+	pr.bot = bot
+
+	if err := ensureUploadDir(cfg.UploadDir); err != nil {
+		return nil, fmt.Errorf("не удалось создать директорию для загрузки audio: %w", err)
+	}
+
+	return pr, nil
+}
+
+func (p *ProcessorBot) OnStart(_ context.Context) error {
+	go p.start(p.ctx)
+
+	return nil
+}
+
+func (p *ProcessorBot) OnStop(_ context.Context) error {
+	p.stop()
+	return nil
+}
+
+func (p *ProcessorBot) newTeleBot(token string, pollingPeriod int) (*tele.Bot, error) {
+	pref := tele.Settings{
+		Token:  token,
+		Poller: &tele.LongPoller{Timeout: time.Duration(pollingPeriod) * time.Second},
+	}
+
+	b, err := tele.NewBot(pref)
+	if err != nil {
+		return nil, err
+	}
+
+	err = b.SetCommands([]tele.Command{
+		{Text: "start", Description: "Запуск"},
+		{Text: "list", Description: "Получить список аудио"},
+		{Text: "get", Description: "Получить расшифровку по id"},
+		{Text: "find", Description: "Найти аудио по слову"},
+		{Text: "chat", Description: "Запуск чата"},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	b.Handle("/start", p.SaveUser)
+	b.Handle("/list", p.GetListAudio)
+	b.Handle("/get", p.GetTextAudio)
+	b.Handle("/chat", p.GigaChatRequest)
+	b.Handle("/find", p.FindAudio)
+
+	b.Handle(tele.OnText, p.handlerOnText)
+
+	b.Handle(tele.OnAudio, p.handlerOnAudio)
+
+	b.Handle(tele.OnVoice, p.hanlerOnVoice)
+
+	markup := &tele.ReplyMarkup{}
+	btnItemGet := markup.Data("stub", "item_get")
+
+	b.Handle(&btnItemGet, p.handlerItemGet)
+
+	return b, nil
+
+}
+
+func (p *ProcessorBot) start(ctx context.Context) {
+
+	p.startWorkers(ctx)
+
+	p.bot.Start()
+
+}
+
+func (p *ProcessorBot) stop() {
+	p.bot.Stop()
+}
+
+func (p *ProcessorBot) startWorkers(ctx context.Context) {
+	for i := 0; i < p.workers; i++ {
+		go p.worker(ctx, i+1)
+	}
+}
+
+func (p *ProcessorBot) worker(ctx context.Context, workerID int) {
+	p.lgr.Info(fmt.Sprintf("worker %d запущен", workerID))
+
+	for {
+		select {
+		case <-ctx.Done():
+			p.lgr.Info(fmt.Sprintf("worker %d остановлен", workerID))
+			return
+
+		case job := <-p.jobs:
+			reqCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+
+			answer, opts, err := p.process(reqCtx, &job)
+			cancel()
+
+			chat := &tele.Chat{ID: job.ChatID}
+
+			if err != nil {
+				msg := "Ошибка обработки"
+				if errors.Is(err, context.DeadlineExceeded) {
+					msg = "Не успела обработать запрос вовремя"
+				}
+
+				chat := &tele.Chat{ID: job.ChatID}
+
+				p.lgr.Error("ошибка в работе handler", zap.Int("worker", workerID), zap.String("handler", job.Handler), zap.Int64("userID", job.UserID), zap.Error(err))
+
+				if _, sendErr := p.bot.Send(chat, msg); sendErr != nil {
+					p.lgr.Error("ошибка отправки", zap.Int("worker", workerID), zap.Error(sendErr))
+				}
+				continue
+			}
+
+			if _, sendErr := p.bot.Send(chat, answer, opts...); sendErr != nil {
+				p.lgr.Error("ошибка отправки", zap.Int("worker", workerID), zap.String("handler", job.Handler), zap.Int64("userID", job.UserID), zap.Error(sendErr))
+			}
+		}
+	}
+}
