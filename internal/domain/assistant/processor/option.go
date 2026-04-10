@@ -19,6 +19,15 @@ type ProcessorBotConfig struct {
 
 type ProcessorBotOption = Option[ProcessorBotConfig]
 
+func NewProcessorBotConfig(opts ...ProcessorBotOption) (ProcessorBotConfig, error) {
+	var cfg ProcessorBotConfig
+	Apply(&cfg, opts...)
+	if err := cfg.Validate(); err != nil {
+		return ProcessorBotConfig{}, err
+	}
+	return cfg, nil
+}
+
 func WithSizeChannel(n int) ProcessorBotOption {
 	return func(c *ProcessorBotConfig) {
 		c.SizeChannel = n
@@ -45,16 +54,16 @@ func WithUploadDir(dir string) ProcessorBotOption {
 
 func (c *ProcessorBotConfig) Validate() error {
 	if c.SizeChannel <= 0 {
-		return fmt.Errorf("sizeChannel не может быть меньше 0")
+		return fmt.Errorf("sizeChannel не может быть меньше либо равен 0")
 	}
 	if c.CountWorkers <= 0 {
-		return fmt.Errorf("countWorkers не может быть меньше 0")
+		return fmt.Errorf("countWorkers не может быть меньше либо равен 0")
 	}
 	if c.PollingPeriodBot <= 0 {
-		return fmt.Errorf("pollingPeriodBot не может быть меньше 0")
+		return fmt.Errorf("pollingPeriodBot не может быть меньше либо равен 0")
 	}
 	if c.UploadDir == "" {
-		return fmt.Errorf("не указана директория для хранения  временных файлов")
+		return fmt.Errorf("не указана директория для хранения временных файлов")
 	}
 
 	return nil

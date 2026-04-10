@@ -66,16 +66,13 @@ func NewProcessorBot(ctx context.Context, logger *zap.Logger, cfgGlobal *config.
 		return nil, fmt.Errorf("не указан repository")
 	}
 
-	cfg := ProcessorBotConfig{}
-	Apply(
-		&cfg,
+	cfg, err := NewProcessorBotConfig(
 		WithCountWorkers(cfgGlobal.CountWorkers),
 		WithPollingPeriodBot(cfgGlobal.PollingBot),
 		WithSizeChannel(cfgGlobal.SizeChannel),
 		WithUploadDir(cfgGlobal.DirectoryLoadAudio),
 	)
-
-	if err := cfg.Validate(); err != nil {
+	if err != nil {
 		return nil, err
 	}
 
