@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/go-resty/resty/v2"
 )
@@ -46,7 +47,7 @@ func (tm *TokenManager) RefreshToken() error {
 	tm.refreshMx.Lock()
 	defer tm.refreshMx.Unlock()
 
-	if tm.CurrentToken() != "" {
+	if tm.CurrentToken() != "" && tm.token.ExpiresDate > time.Now().Unix() {
 		return nil
 	}
 

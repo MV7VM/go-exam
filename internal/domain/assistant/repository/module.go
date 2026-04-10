@@ -6,7 +6,7 @@ import (
 )
 
 func New() fx.Option {
-	return fx.Module("migrator",
+	return fx.Module("repository",
 		fx.Provide(
 			NewRepo,
 		),
@@ -18,7 +18,7 @@ func New() fx.Option {
 			},
 		),
 		fx.Decorate(func(log *zap.Logger) *zap.Logger {
-			return log.Named("migrator")
+			return log.Named("repository")
 		}),
 	)
 }
